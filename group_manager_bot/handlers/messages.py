@@ -1593,4 +1593,4 @@ def get_setting_name(
     return names.get(
         setting,
         "این قابلیت"
-    )
+        )
