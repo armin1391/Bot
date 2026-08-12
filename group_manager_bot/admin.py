@@ -6,7 +6,10 @@ from database.database import (
     get_connection
 )
 
-from api.bale import send_message
+from api.bale import (
+    send_message,
+    get_chat
+)
 
 
 # =========================================================
@@ -33,7 +36,7 @@ def is_owner(user_id):
 
 
 # =========================================================
-# 📊 تعداد گروه‌هایی که ربات در دیتابیس دارد
+# 📊 تعداد کل گروه‌هایی که ربات در دیتابیس دارد
 # =========================================================
 
 def get_all_groups_count():
@@ -113,7 +116,7 @@ def users_statistics():
     count = get_users_count()
 
     return (
-        "👥 آمار کاربران\n"
+        "👥 آمار کاربران GuardX\n"
         "\n"
         "━━━━━━━━━━━━━━\n"
         "\n"
@@ -124,24 +127,182 @@ def users_statistics():
 
 
 # =========================================================
-# 📊 آمار گروه‌ها
+# 📊 آمار کامل گروه‌ها
 # =========================================================
 
 def groups_statistics():
 
-    active_groups = get_groups_count()
+    connection = get_connection()
 
-    all_groups = get_all_groups_count()
+    try:
+
+        # =================================================
+        # 📊 تعداد کل گروه‌ها
+        # =================================================
+
+        total_result = connection.execute("""
+            SELECT COUNT(*) AS count
+            FROM groups
+        """).fetchone()
+
+        # =================================================
+        # 🟢 تعداد گروه‌های فعال
+        # =================================================
+
+        active_result = connection.execute("""
+            SELECT COUNT(*) AS count
+            FROM groups
+            WHERE activated = 1
+        """).fetchone()
+
+        # =================================================
+        # 📋 دریافت تمام گروه‌ها
+        # =================================================
+
+        groups = connection.execute("""
+            SELECT
+                chat_id,
+                activated
+            FROM groups
+            ORDER BY created_at DESC
+        """).fetchall()
+
+    finally:
+
+        connection.close()
+
+
+    total_groups = total_result["count"]
+
+    active_groups = active_result["count"]
+
+    inactive_groups = (
+        total_groups - active_groups
+    )
+
+
+    # =====================================================
+    # 📋 ساخت لیست گروه‌ها
+    # =====================================================
+
+    group_list = []
+
+
+    for group in groups:
+
+        chat_id = group["chat_id"]
+
+        activated = (
+            group["activated"] == 1
+        )
+
+        username = None
+
+
+        # =================================================
+        # 🔎 دریافت username گروه
+        # =================================================
+
+        try:
+
+            result = get_chat(
+                chat_id
+            )
+
+            if result and result.get("ok"):
+
+                chat = result.get(
+                    "result",
+                    {}
+                )
+
+                username = chat.get(
+                    "username"
+                )
+
+        except Exception as e:
+
+            print(
+                f"❌ [GROUP INFO ERROR] "
+                f"chat_id={chat_id} "
+                f"error={e}"
+            )
+
+
+        # =================================================
+        # 🆔 username یا آیدی عددی
+        # =================================================
+
+        if username:
+
+            group_identifier = (
+                f"@{username}"
+            )
+
+        else:
+
+            group_identifier = (
+                f"🆔 {chat_id}"
+            )
+
+
+        # =================================================
+        # 🟢 / 🔴 وضعیت گروه
+        # =================================================
+
+        if activated:
+
+            status = "🟢"
+
+        else:
+
+            status = "🔴"
+
+
+        group_list.append(
+            f"{status} {group_identifier}"
+        )
+
+
+    # =====================================================
+    # 📋 اگر هیچ گروهی وجود نداشت
+    # =====================================================
+
+    if group_list:
+
+        groups_text = "\n".join(
+            group_list
+        )
+
+    else:
+
+        groups_text = (
+            "❌ هنوز هیچ گروهی ثبت نشده است."
+        )
+
+
+    # =====================================================
+    # 📊 متن نهایی آمار گروه‌ها
+    # =====================================================
 
     return (
-        "👥 آمار گروه‌ها\n"
+        "📊 آمار گروه‌های GuardX\n"
         "\n"
         "━━━━━━━━━━━━━━\n"
         "\n"
+        f"🏘️ کل گروه‌ها: {total_groups}\n"
         f"🟢 گروه‌های فعال: {active_groups}\n"
-        f"📥 گروه‌های ثبت‌شده: {all_groups}\n"
+        f"🔴 گروه‌های غیرفعال: {inactive_groups}\n"
         "\n"
-        "━━━━━━━━━━━━━━"
+        "━━━━━━━━━━━━━━\n"
+        "\n"
+        "📋 لیست گروه‌ها:\n"
+        "\n"
+        f"{groups_text}\n"
+        "\n"
+        "━━━━━━━━━━━━━━\n"
+        "\n"
+        "🟢 فعال | 🔴 غیرفعال"
     )
 
 
@@ -186,6 +347,7 @@ def broadcast_message(
 
     global broadcast_mode
 
+
     if not text:
 
         return {
@@ -193,16 +355,21 @@ def broadcast_message(
             "failed": 0
         }
 
+
     user_ids = get_all_user_ids()
 
     group_ids = get_all_group_ids()
+
 
     targets = set(
         user_ids + group_ids
     )
 
+
     success = 0
+
     failed = 0
+
 
     for chat_id in targets:
 
@@ -213,6 +380,7 @@ def broadcast_message(
                 text
             )
 
+
             if result:
 
                 success += 1
@@ -221,9 +389,11 @@ def broadcast_message(
 
                 failed += 1
 
+
         except Exception as e:
 
             failed += 1
+
 
             print(
                 f"❌ [BROADCAST ERROR] "
@@ -231,13 +401,18 @@ def broadcast_message(
                 f"error={e}"
             )
 
+
         # -------------------------------------------------
         # کمی فاصله برای جلوگیری از فشار زیاد
         # -------------------------------------------------
 
-        time.sleep(0.05)
+        time.sleep(
+            0.05
+        )
+
 
     broadcast_mode = False
+
 
     return {
         "success": success,
@@ -256,14 +431,17 @@ def handle_admin_message(
 
     global broadcast_mode
 
+
     user = message.get(
         "from",
         {}
     )
 
+
     user_id = user.get(
         "id"
     )
+
 
     # =====================================================
     # 🔐 فقط سازنده
@@ -284,9 +462,11 @@ def handle_admin_message(
         "text"
     )
 
+
     if not text:
 
         return False
+
 
     text = text.strip()
 
@@ -305,10 +485,12 @@ def handle_admin_message(
 
             cancel_broadcast()
 
+
             send_message(
                 user_id,
                 "❌ ارسال همگانی لغو شد."
             )
+
 
             return True
 
@@ -316,6 +498,7 @@ def handle_admin_message(
         result = broadcast_message(
             text
         )
+
 
         send_message(
             user_id,
@@ -326,6 +509,7 @@ def handle_admin_message(
                 f"❌ ناموفق: {result['failed']}"
             )
         )
+
 
         return True
 
@@ -344,6 +528,7 @@ def handle_admin_message(
             user_id,
             users_statistics()
         )
+
 
         return True
 
@@ -365,6 +550,7 @@ def handle_admin_message(
             groups_statistics()
         )
 
+
         return True
 
 
@@ -378,6 +564,7 @@ def handle_admin_message(
     ):
 
         start_broadcast()
+
 
         send_message(
             user_id,
@@ -393,6 +580,7 @@ def handle_admin_message(
                 "❌ لغو"
             )
         )
+
 
         return True
 
