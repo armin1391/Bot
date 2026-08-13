@@ -25,6 +25,7 @@ from api.bale import (
 
 from database.database import (
     init_database,
+    register_group,
     record_group_message,
     record_member_event,
     is_group_activated
@@ -93,6 +94,68 @@ def get_updates(offset=None):
         data=data,
         timeout=35
     )
+
+
+# =========================================================
+# 🟢 ثبت خودکار گروه
+#
+# هر وقت از یک گروه آپدیت دریافت شود،
+# گروه در دیتابیس ثبت می‌شود.
+#
+# اگر قبلاً فعال بوده باشد، فعال بودنش حفظ می‌شود.
+# =========================================================
+
+def ensure_group_registered(message):
+
+    chat = message.get(
+        "chat",
+        {}
+    )
+
+    chat_type = chat.get(
+        "type"
+    )
+
+    # فقط گروه و سوپرگروه
+    if chat_type not in (
+        "group",
+        "supergroup"
+    ):
+        return False
+
+    chat_id = chat.get(
+        "id"
+    )
+
+    if chat_id is None:
+        return False
+
+    title = chat.get(
+        "title"
+    )
+
+    try:
+
+        register_group(
+            chat_id=chat_id,
+            title=title
+        )
+
+        print(
+            f"👥 [GROUP REGISTERED] "
+            f"chat_id={chat_id} "
+            f"title={title}"
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"❌ [GROUP REGISTER ERROR] {e}"
+        )
+
+        return False
 
 
 # =========================================================
@@ -740,9 +803,27 @@ def process_update(update):
 
 
     # =====================================================
-    # 🚀 سیستم /start و منوی اصلی
+    # 👥 ثبت خودکار گروه
     #
-    # این قسمت قبل از پنل سازنده اجرا می‌شود.
+    # مهم:
+    # این قسمت باید قبل از آمار و امنیت اجرا شود.
+    #
+    # اگر گروه قبلاً فعال شده باشد،
+    # register_group فعال بودن آن را حفظ می‌کند.
+    # =====================================================
+
+    if chat_type in (
+        "group",
+        "supergroup"
+    ):
+
+        ensure_group_registered(
+            message
+        )
+
+
+    # =====================================================
+    # 🚀 سیستم /start و منوی اصلی
     # =====================================================
 
     try:
@@ -771,9 +852,6 @@ def process_update(update):
 
     # =====================================================
     # 👑 پنل سازنده
-    #
-    # این قسمت باید قبل از امنیت و messages.py باشد.
-    # فقط OWNER_ID داخل admin.py اجازه دارد.
     # =====================================================
 
     admin_handled = run_admin_handler(
@@ -814,17 +892,27 @@ def process_update(update):
         "supergroup"
     ):
 
-        try:
+        # -------------------------------------------------
+        # فقط برای گروه فعال ادمین‌ها را بگیر
+        #
+        # گروه غیرفعال نیازی به API اضافی ندارد.
+        # -------------------------------------------------
 
-            admins = get_chat_administrators(
-                chat_id
-            )
+        if is_group_activated(
+            chat_id
+        ):
 
-        except Exception as e:
+            try:
 
-            print(
-                f"❌ [ADMIN ERROR] {e}"
-            )
+                admins = get_chat_administrators(
+                    chat_id
+                )
+
+            except Exception as e:
+
+                print(
+                    f"❌ [ADMIN ERROR] {e}"
+                )
 
 
     # =====================================================
