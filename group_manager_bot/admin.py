@@ -7,8 +7,7 @@ from database.database import (
 )
 
 from api.bale import (
-    send_message,
-    get_chat
+    send_message
 )
 
 
