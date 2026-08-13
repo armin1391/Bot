@@ -7,7 +7,8 @@ from database.database import (
 )
 
 from api.bale import (
-    send_message
+    send_message,
+    get_chat
 )
 
 
@@ -136,33 +137,54 @@ def groups_statistics():
     try:
 
         # =================================================
-        # 📊 تعداد کل گروه‌ها
+        # 👥 تعداد گروه‌هایی که ربات واقعاً داخل آنهاست
         # =================================================
 
         total_result = connection.execute("""
             SELECT COUNT(*) AS count
             FROM groups
+            WHERE bot_joined = 1
         """).fetchone()
 
         # =================================================
         # 🟢 تعداد گروه‌های فعال
+        #
+        # فعال بودن فقط زمانی حساب می‌شود که:
+        # bot_joined = 1
+        # activated = 1
         # =================================================
 
         active_result = connection.execute("""
             SELECT COUNT(*) AS count
             FROM groups
-            WHERE activated = 1
+            WHERE bot_joined = 1
+            AND activated = 1
         """).fetchone()
 
         # =================================================
-        # 📋 دریافت تمام گروه‌ها
+        # 🔴 تعداد گروه‌های غیرفعال
+        #
+        # ربات داخل گروه است اما گروه فعال نشده
+        # =================================================
+
+        inactive_result = connection.execute("""
+            SELECT COUNT(*) AS count
+            FROM groups
+            WHERE bot_joined = 1
+            AND activated = 0
+        """).fetchone()
+
+        # =================================================
+        # 📋 دریافت فقط گروه‌هایی که ربات داخل آنهاست
         # =================================================
 
         groups = connection.execute("""
             SELECT
                 chat_id,
-                activated
+                activated,
+                bot_joined
             FROM groups
+            WHERE bot_joined = 1
             ORDER BY created_at DESC
         """).fetchall()
 
@@ -171,13 +193,15 @@ def groups_statistics():
         connection.close()
 
 
+    # =====================================================
+    # 📊 تبدیل نتایج
+    # =====================================================
+
     total_groups = total_result["count"]
 
     active_groups = active_result["count"]
 
-    inactive_groups = (
-        total_groups - active_groups
-    )
+    inactive_groups = inactive_result["count"]
 
 
     # =====================================================
@@ -276,7 +300,7 @@ def groups_statistics():
     else:
 
         groups_text = (
-            "❌ هنوز هیچ گروهی ثبت نشده است."
+            "❌ هنوز هیچ گروهی که ربات داخل آن باشد ثبت نشده است."
         )
 
 
@@ -285,22 +309,36 @@ def groups_statistics():
     # =====================================================
 
     return (
+
         "📊 آمار گروه‌های GuardX\n"
+
         "\n"
         "━━━━━━━━━━━━━━\n"
         "\n"
-        f"🏘️ کل گروه‌ها: {total_groups}\n"
-        f"🟢 گروه‌های فعال: {active_groups}\n"
-        f"🔴 گروه‌های غیرفعال: {inactive_groups}\n"
+
+        f"👥 ربات عضو {total_groups} گروه است.\n"
+        "\n"
+
+        f"🟢 تعداد کل گروه‌های فعال: "
+        f"{active_groups}\n"
+        "\n"
+
+        f"🔴 تعداد کل گروه‌های غیرفعال: "
+        f"{inactive_groups}\n"
+
         "\n"
         "━━━━━━━━━━━━━━\n"
         "\n"
+
         "📋 لیست گروه‌ها:\n"
         "\n"
+
         f"{groups_text}\n"
+
         "\n"
         "━━━━━━━━━━━━━━\n"
         "\n"
+
         "🟢 فعال | 🔴 غیرفعال"
     )
 
