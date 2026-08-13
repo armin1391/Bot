@@ -70,9 +70,33 @@ def init_database():
 
                 activated INTEGER NOT NULL DEFAULT 0,
 
+                bot_joined INTEGER NOT NULL DEFAULT 1,
+
                 created_at INTEGER NOT NULL
             )
         """)
+
+        # =====================================================
+        # 🔄 سازگاری با دیتابیس‌های قدیمی
+        # =====================================================
+
+        columns = connection.execute("""
+            PRAGMA table_info(groups)
+        """).fetchall()
+
+        column_names = {
+            column["name"]
+            for column in columns
+        }
+
+        if "bot_joined" not in column_names:
+
+            connection.execute("""
+                ALTER TABLE groups
+
+                ADD COLUMN bot_joined
+                INTEGER NOT NULL DEFAULT 1
+            """)
 
         # =====================================================
         # ⚙️ تنظیمات گروه
@@ -313,6 +337,20 @@ def init_database():
             )
         """)
 
+        # =====================================================
+        # 👥 ایندکس وضعیت گروه‌ها
+        # =====================================================
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS
+            idx_groups_status
+
+            ON groups (
+                bot_joined,
+                activated
+            )
+        """)
+
         connection.commit()
 
         connection.close()
@@ -399,7 +437,9 @@ def group_exists(chat_id):
 
         result = connection.execute("""
             SELECT 1
+
             FROM groups
+
             WHERE chat_id = ?
         """, (
             chat_id,
@@ -410,11 +450,18 @@ def group_exists(chat_id):
         return result is not None
 
 
-def activate_group(
+# =========================================================
+# 🟢 ثبت گروهی که ربات داخل آن عضو شده
+# =========================================================
+
+def register_group(
     chat_id,
-    title,
-    created_at
+    title=None,
+    created_at=None
 ):
+
+    if created_at is None:
+        created_at = int(time.time())
 
     with _db_lock:
 
@@ -426,17 +473,100 @@ def activate_group(
                 chat_id,
                 title,
                 activated,
+                bot_joined,
                 created_at
             )
 
-            VALUES (?, ?, 1, ?)
+            VALUES (?, ?, 0, 1, ?)
 
             ON CONFLICT(chat_id)
 
             DO UPDATE SET
 
                 title = excluded.title,
-                activated = 1
+
+                bot_joined = 1
+        """, (
+            chat_id,
+            title,
+            created_at
+        ))
+
+        connection.commit()
+
+        connection.close()
+
+    return True
+
+
+# =========================================================
+# 🔴 ثبت خروج ربات از گروه
+# =========================================================
+
+def mark_group_left(chat_id):
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        connection.execute("""
+            UPDATE groups
+
+            SET
+
+                bot_joined = 0,
+                activated = 0
+
+            WHERE chat_id = ?
+        """, (
+            chat_id,
+        ))
+
+        connection.commit()
+
+        connection.close()
+
+    return True
+
+
+# =========================================================
+# 🟢 فعال کردن گروه
+# =========================================================
+
+def activate_group(
+    chat_id,
+    title,
+    created_at=None
+):
+
+    if created_at is None:
+        created_at = int(time.time())
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        connection.execute("""
+            INSERT INTO groups (
+
+                chat_id,
+                title,
+                activated,
+                bot_joined,
+                created_at
+            )
+
+            VALUES (?, ?, 1, 1, ?)
+
+            ON CONFLICT(chat_id)
+
+            DO UPDATE SET
+
+                title = excluded.title,
+
+                activated = 1,
+
+                bot_joined = 1
         """, (
             chat_id,
             title,
@@ -445,6 +575,7 @@ def activate_group(
 
         connection.execute("""
             INSERT OR IGNORE INTO group_settings (
+
                 chat_id
             )
 
@@ -457,6 +588,39 @@ def activate_group(
 
         connection.close()
 
+    return True
+
+
+# =========================================================
+# 🔴 غیرفعال کردن گروه
+# =========================================================
+
+def deactivate_group(chat_id):
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        connection.execute("""
+            UPDATE groups
+
+            SET activated = 0
+
+            WHERE chat_id = ?
+        """, (
+            chat_id,
+        ))
+
+        connection.commit()
+
+        connection.close()
+
+    return True
+
+
+# =========================================================
+# ❓ آیا گروه فعال است؟
+# =========================================================
 
 def is_group_activated(chat_id):
 
@@ -466,7 +630,9 @@ def is_group_activated(chat_id):
 
         result = connection.execute("""
             SELECT activated
+
             FROM groups
+
             WHERE chat_id = ?
         """, (
             chat_id,
@@ -480,6 +646,38 @@ def is_group_activated(chat_id):
         return result["activated"] == 1
 
 
+# =========================================================
+# ❓ آیا ربات داخل گروه است؟
+# =========================================================
+
+def is_bot_in_group(chat_id):
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        result = connection.execute("""
+            SELECT bot_joined
+
+            FROM groups
+
+            WHERE chat_id = ?
+        """, (
+            chat_id,
+        )).fetchone()
+
+        connection.close()
+
+        if not result:
+            return False
+
+        return result["bot_joined"] == 1
+
+
+# =========================================================
+# 📊 تعداد گروه‌های فعال
+# =========================================================
+
 def get_groups_count():
 
     with _db_lock:
@@ -488,13 +686,167 @@ def get_groups_count():
 
         result = connection.execute("""
             SELECT COUNT(*) AS count
+
             FROM groups
-            WHERE activated = 1
+
+            WHERE bot_joined = 1
+
+            AND activated = 1
         """).fetchone()
 
         connection.close()
 
         return result["count"]
+
+
+def get_active_groups_count():
+
+    return get_groups_count()
+
+
+# =========================================================
+# 📊 تعداد کل گروه‌هایی که ربات داخل آنهاست
+# =========================================================
+
+def get_bot_groups_count():
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        result = connection.execute("""
+            SELECT COUNT(*) AS count
+
+            FROM groups
+
+            WHERE bot_joined = 1
+        """).fetchone()
+
+        connection.close()
+
+        return result["count"]
+
+
+# =========================================================
+# 📊 تعداد گروه‌هایی که ربات عضو است ولی فعال نیست
+# =========================================================
+
+def get_inactive_groups_count():
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        result = connection.execute("""
+            SELECT COUNT(*) AS count
+
+            FROM groups
+
+            WHERE bot_joined = 1
+
+            AND activated = 0
+        """).fetchone()
+
+        connection.close()
+
+        return result["count"]
+
+
+# =========================================================
+# 📋 لیست تمام گروه‌هایی که ربات داخل آنهاست
+# =========================================================
+
+def get_bot_groups():
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        result = connection.execute("""
+            SELECT
+
+                chat_id,
+                title,
+                activated,
+                bot_joined,
+                created_at
+
+            FROM groups
+
+            WHERE bot_joined = 1
+
+            ORDER BY created_at DESC
+        """).fetchall()
+
+        connection.close()
+
+    return result
+
+
+# =========================================================
+# 📋 لیست گروه‌های فعال
+# =========================================================
+
+def get_active_groups():
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        result = connection.execute("""
+            SELECT
+
+                chat_id,
+                title,
+                activated,
+                bot_joined,
+                created_at
+
+            FROM groups
+
+            WHERE bot_joined = 1
+
+            AND activated = 1
+
+            ORDER BY created_at DESC
+        """).fetchall()
+
+        connection.close()
+
+    return result
+
+
+# =========================================================
+# 📋 لیست گروه‌های غیرفعال
+# =========================================================
+
+def get_inactive_groups():
+
+    with _db_lock:
+
+        connection = get_connection()
+
+        result = connection.execute("""
+            SELECT
+
+                chat_id,
+                title,
+                activated,
+                bot_joined,
+                created_at
+
+            FROM groups
+
+            WHERE bot_joined = 1
+
+            AND activated = 0
+
+            ORDER BY created_at DESC
+        """).fetchall()
+
+        connection.close()
+
+    return result
 
 
 # =========================================================
@@ -606,6 +958,7 @@ def get_filtered_word(
 
         result = connection.execute("""
             SELECT
+
                 word,
                 response
 
@@ -640,6 +993,7 @@ def get_all_filtered_words(
 
         result = connection.execute("""
             SELECT
+
                 word,
                 response
 
@@ -726,6 +1080,7 @@ def get_channels_count():
 
         result = connection.execute("""
             SELECT COUNT(*) AS count
+
             FROM channels
         """).fetchone()
 
@@ -757,6 +1112,7 @@ def ensure_group_settings(
 
     connection.execute("""
         INSERT OR IGNORE INTO group_settings (
+
             chat_id
         )
 
@@ -1906,4 +2262,4 @@ def get_group_statistics(chat_id):
                 chat_id,
                 3
             )
-    }
+        }
